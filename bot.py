@@ -1,237 +1,22 @@
-import parser
-import config
-from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
+VERSION = "test"
+
 from telebot import types
 import telebot
-import pytz
-import os
-from datetime import datetime, timedelta
-import sqlite3
-import threading
-import ast
-import json
-import requests
-import os
-import re
+
+import config
+import parser
+from scripts import *
+import keyboards
 
 
 bot = telebot.TeleBot(config.API)  # создание бота
-
-# глобальные переменные
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-VERSION = "1.0.6"
-DB_NAME = 'database.db'
-DB_PATH = f"{SCRIPT_DIR}/{DB_NAME}"
-YEAR = 25
-
-COMPLEX_LINKS = {
-"Российская 23": "https://pronew.chenk.ru/blocks/manage_groups/website/list.php?id=3",
-"Блюхера 91": "https://pronew.chenk.ru/blocks/manage_groups/website/list.php?id=1"
-}
-
-DAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
-LOG = "Логи: "
-README_PATH = os.path.join(SCRIPT_DIR, 'README.md')
 
 commands = [  # КОМАНДЫ
 telebot.types.BotCommand("start", "Перезапуск"),
 telebot.types.BotCommand("today", "Расписание на сегодня"),
 telebot.types.BotCommand("tomorrow", "Расписание на завтра"),
 telebot.types.BotCommand("week", "Расписание на всю неделю"),
-telebot.types.BotCommand("info", "Дополнительная информация"),
 ]
-
-# КНОПКИ
-btn_return_complex = InlineKeyboardButton(text="< Назад", callback_data="back_complex")
-btn_ros23 = InlineKeyboardButton(text="Российская 23", callback_data="complex_Российская 23")
-btn_blux91 = InlineKeyboardButton(text="Блюхера 91", callback_data="complex_Блюхера 91")
-btn_select_teachers = InlineKeyboardButton(text="Я преподаватель", callback_data='teachers_select')
-btn_day = InlineKeyboardButton(text="День", callback_data="select_day")
-btn_week = InlineKeyboardButton(text="Неделя", callback_data="select_week")
-btn_change_group = InlineKeyboardButton(text="Изменить группу", callback_data="back_courses")
-btn_return_main = InlineKeyboardButton(text="< Назад", callback_data="back_main")
-days_buttons = [InlineKeyboardButton(text=day, callback_data=f"day_{day.lower()}") for day in DAYS]
-btn_dayback = InlineKeyboardButton(text="< Назад", callback_data="select_day")
-back = InlineKeyboardButton(text="< Назад", callback_data="back_courses")
-btn_back_info = InlineKeyboardButton(text="Назад", callback_data="back_info")
-btn_github = InlineKeyboardButton(text="Репозиторий на Github", url="https://github.com/pinghoyk/schedule")
-btn_readme = InlineKeyboardButton(text="Описание", callback_data='readme')
-btn_what_new = InlineKeyboardButton(text="Что нового?", callback_data='what_new')
-btn_return_in_info = InlineKeyboardButton(text="< Назад", callback_data='back_in_info')
-btn_admin = InlineKeyboardButton(text="Администратор", callback_data='admin')
-btn_stat = InlineKeyboardButton(text="Статистика", callback_data='stat')
-btn_bd_download = InlineKeyboardButton(text="База данных", callback_data='bd_download')
-btn_restart = InlineKeyboardButton(text="Перезапустить", callback_data='back_complex')
-btn_share_schedule = InlineKeyboardButton("Поделится расписанием", switch_inline_query="")
-
-# КЛАВИАТУРЫ
-keyboard_complex = InlineKeyboardMarkup(row_width=1)
-keyboard_complex.add(btn_ros23, btn_blux91)
-
-keyboard_week = InlineKeyboardMarkup(row_width=2)
-keyboard_week.add(btn_return_main, btn_share_schedule)
-
-keyboard_days = InlineKeyboardMarkup(row_width=2)
-keyboard_days.add(*days_buttons, btn_return_main)
-
-keyboard_day_back = InlineKeyboardMarkup(row_width=2)
-keyboard_day_back.add(btn_dayback, btn_share_schedule)
-
-keyboard_error = InlineKeyboardMarkup()
-keyboard_error.add(btn_change_group)
-
-keyboard_info = InlineKeyboardMarkup(row_width=2)
-keyboard_info.add(btn_github)
-keyboard_info.add(btn_readme, btn_what_new)
-keyboard_info.add(btn_return_main)
-
-keyboard_btn_info = InlineKeyboardMarkup(row_width=2)
-keyboard_btn_info.add(btn_back_info)
-
-keyboard_return_info = InlineKeyboardMarkup()
-keyboard_return_info.add(btn_return_in_info)
-
-keyboard_admin = InlineKeyboardMarkup(row_width=2)
-keyboard_admin.add(btn_stat, btn_bd_download, btn_return_main)
-
-keyboard_restart = InlineKeyboardMarkup(row_width=2)
-keyboard_restart.add(btn_restart)
-
-
-
-# ПРОВЕРКИ
-if os.path.exists(DB_PATH):
-    print(f'{LOG}бд есть!')
-else:
-    connect = sqlite3.connect(DB_PATH)
-    cursor = connect.cursor()
-    cursor.execute("""
-        CREATE TABLE users (
-            id INTEGER,
-            message INTEGER, 
-            groups TEXT,
-            time_registration TIME,
-            complex TEXT,
-            username TEXT,
-            last_call INTEGER
-        )
-    """)
-    connect.commit()
-    connect.close()
-    print(f"{LOG}бд создана")
-
-
-# ФУНКЦИИ
-def SQL_request(request, params=()):  # sql запросы
-    connect = sqlite3.connect(DB_PATH)
-    cursor = connect.cursor()
-    if request.strip().lower().startswith('select'):
-        cursor.execute(request, params)
-        result = cursor.fetchone()
-        return result
-    else:
-        cursor.execute(request, params)
-        connect.commit()
-    connect.close()
-
-
-def now_time():  # функция получения текущего времени по мск
-    now = datetime.now()
-    tz = pytz.timezone('Europe/Moscow')
-    now_moscow = now.astimezone(tz)
-    current_time = now_moscow.strftime("%H:%M")
-    current_date = now_moscow.strftime("%m.%d.%Y")
-    date = f"{current_date} {current_time}"
-    return date
-
-
-def now_day(day = None):
-    today = datetime.today().weekday()
-    if day == "tomorrow": 
-        today += 1
-    if today >= 6:
-        today = 0
-    return DAYS[today]
-
-
-def markup_text(schedule, is_teacher_format=False):  # Добавление markdown символов
-    # Сортируем расписание по порядку дней недели
-    sorted_schedule = sorted(schedule.items(), key=lambda x: DAYS.index(x[0].split(", ")[-1]))
-
-    result = []
-    for key, lessons in sorted_schedule:
-        result.append(f"*{key}*\n————————————————")
-        
-        # Сортируем уроки по времени начала, пропуская невалидные значения
-        lessons.sort(key=lambda lesson: (
-            int(lesson['time_start'].replace('.', '').replace(':', '')) if lesson['time_start'] != '???' else float('inf')
-        ))
-
-        for i, lesson in enumerate(lessons, start=1):
-            time_start = lesson['time_start']
-            time_finish = lesson['time_finish']
-            lesson_info = f"\n{i}.  _{time_start} - {time_finish}_\n"
-
-            if is_teacher_format:
-                group = lesson['group']
-                lesson_name = lesson['lesson_name']
-                classroom = lesson['classroom'] if lesson['classroom'] else ''
-                lesson_info += f"*Предмет*: {lesson_name}\n_*Группа:* {group}_  *{classroom}*\n"
-            else:
-                for l in lesson['lessons']:
-                    lesson_info += f"*Предмет: *{l['name']}\n"
-                    for data in l["data"]:
-                        teacher_name = f"*Преподаватель: * {data['teacher']}".replace("отмена", "").strip()
-                        lesson_info += f"_{teacher_name}_  *{data['classroom']}*\n"
-
-            result.append(lesson_info)
-
-        result.append("\n\n")
-
-    result = ''.join(result)  # Объединяем список в строку
-    result = tg_markdown(result)  # Применяем функцию для обработки markdown в Telegram
-    result = result.replace("???", "**???**")  # Подсвечиваем "???", если время неизвестно
-    return result
-
-
-def tg_markdown(text):  # экранирование только для телеграма
-    special_characters = r'[]()>#+-=|{}.!'
-    escaped_text = ''
-    for char in text:
-        if char in special_characters:
-            escaped_text += f'\\{char}'
-        else:
-            escaped_text += char
-    return escaped_text
-
-
-def get_week_schedule(complex_choice, user_group):  # получение расписания на неделю
-    courses = parser.table_courses(COMPLEX_LINKS[complex_choice])
-
-    year_start = int(user_group.split('-')[2])
-    course = YEAR - year_start
-
-    groups = courses.get(f'{course} курс', None)
-    if not groups or user_group not in groups:
-        return None
-
-    url = groups[user_group]
-    schedule_week = parser.schedule(f'https://pronew.chenk.ru/blocks/manage_groups/website/{url}')
-
-    return schedule_week
-
-
-def get_day_schedule(complex_choice, user_group, selected_day):  # получение расписания на выбранный день
-    schedule_week = get_week_schedule(complex_choice, user_group)
-    if schedule_week != None:
-        day_schedule = {}
-        for key in schedule_week.keys():
-            if selected_day.lower() in key.lower():
-                day_schedule[key] = schedule_week[key]
-    else: day_schedule = 'Не удалось получить расписание'
-    
-    return day_schedule
-
 
 def keyboard_courses(courses):  # создание клавиатуры с курсами
     buttons = []
@@ -422,21 +207,12 @@ def format_markdown_for_telegram(text):  # форматирует текст с 
 def start(message):
     user_id = message.chat.id
     message_id = message.message_id
-
-    times = now_time()
-    user = SQL_request("SELECT 0 FROM users WHERE id = ?", (user_id,))
-    if user is None:
-        SQL_request("""INSERT INTO users (id, message, time_registration)
-                          VALUES (?, ?, ?)""", (user_id, message_id+1, times))
-        print(f"{LOG}зарегистрирован новый пользователь")
-    else:
-        menu_id = SQL_request("SELECT message FROM users WHERE id = ?", (user_id,))  # получение id меню
-        try: bot.delete_message(message.chat.id, menu_id[0])  # обработка ошибки, если чат пустой, но пользователь есть в базе
-        except Exception as e: print(f"Ошибка: {e}")  # вывод текста ошибки
-        SQL_request("""UPDATE users SET message = ? WHERE id = ?""", (message_id+1, user_id))  # добавление id нового меню
-        print(f"{LOG}пользователь уже существует")
-    bot.send_message(message.chat.id, text="Выберите комплекс:", reply_markup=keyboard_complex)
+    
+    menu_id = registration(user_id, message_id)
+    bot.delete_message(message.chat.id, menu_id[0]) 
     bot.delete_message(message.chat.id, message_id)
+    text, keyboard = keyboards.complex()
+    bot.send_message(message.chat.id, text=text, reply_markup=keyboard)
 
 @bot.message_handler(commands=['today'])  # обработка команды today
 def send_today_schedule(message):
@@ -775,5 +551,5 @@ def start_polling():
             print(f"Ошибка при подключении: {e}")
 
 if __name__ == "__main__":
-    start_polling()
-    # bot.polling(none_stop=True, timeout=60) # что бы бот не перезапускался, при ошибках
+    # start_polling()
+    bot.polling(none_stop=True, timeout=60) # что бы бот не перезапускался, при ошибках
